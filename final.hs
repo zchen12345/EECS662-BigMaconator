@@ -28,8 +28,28 @@ data BigMacExpr where
     If :: BigMacExpr -> BigMacExpr -> BigMacExpr -> BigMacExpr
     Fix :: BigMacExpr -> BigMacExpr
     Between :: BigMacExpr -> BigMacExpr -> BigMacExpr -> BigMacExpr
-    Bind :: String -> BigMacLang -> BigMacExpr -> BigMacExpr -> BigMacExpr
     deriving (Show, Eq)
+
+data BigMacExtend where
+  NumX :: Int -> BigMacExtend
+  BoolX :: Bool -> BigMacExtend
+  IdX :: String -> BigMacExtend
+  PlusX :: BigMacExtend -> BigMacExtend -> BigMacExtend
+  MinusX :: BigMacExtend -> BigMacExtend -> BigMacExtend
+  DivX :: BigMacExtend -> BigMacExtend -> BigMacExtend
+  ExpX :: BigMacExtend -> BigMacExtend -> BigMacExtend
+  LambdaX :: String -> BigMacLang -> BigMacExtend -> BigMacExtend
+  AppX :: BigMacExtend -> BigMacExtend -> BigMacExtend
+  MultX :: BigMacExtend -> BigMacExtend -> BigMacExtend
+  AndX :: BigMacExtend -> BigMacExtend -> BigMacExtend
+  OrX :: BigMacExtend -> BigMacExtend -> BigMacExtend
+  LeqX :: BigMacExtend -> BigMacExtend -> BigMacExtend
+  IsZeroX :: BigMacExtend -> BigMacExtend
+  IfX :: BigMacExtend -> BigMacExtend -> BigMacExtend -> BigMacExtend
+  FixX :: BigMacExtend -> BigMacExtend
+  BindX :: String -> BigMacLang -> BigMacExtend -> BigMacExtend -> BigMacExtend
+  BetweenX :: BigMacExtend -> BigMacExtend -> BigMacExtend -> BigMacExtend
+  deriving (Show, Eq)
 
 data BigMacVal where
     NumMac :: Int -> BigMacVal
@@ -137,6 +157,8 @@ typeof (Fix f) = do
   case tf of
     (t1 :->: t2) -> if t1 == t2 then return t1 else fail "Fix type error"
     _ -> fail "Fix expects function"
+  
+
 numOp :: BigMacExpr -> BigMacExpr -> Reader McdonaldCont BigMacLang
 numOp e1 e2 = do
   t1 <- typeof e1
@@ -149,3 +171,34 @@ boolOp e1 e2 = do
   t2 <- typeof e2
   if t1 == Bbool && t2 == Bbool then return Bbool else fail "Boolean error"
 
+
+--Elaboration
+macterm :: BigMacExtend -> BigMacExpr
+
+macterm (NumX n) = Num n
+macterm (BoolX b) = Bool b
+macterm (IdX x) = Id x
+
+macterm (PlusX a b) = Plus (macterm a) (macterm b)
+macterm (MinusX a b) = Minus (macterm a) (macterm b)
+macterm (MultX a b) = Mult (macterm a) (macterm b)
+macterm (DivX a b) = Div (macterm a) (macterm b)
+macterm (ExpX a b) = Exp (macterm a) (macterm b)
+
+macterm (BetweenX a b c) = Between (macterm a) (macterm b) (macterm c)
+
+macterm (IfX c t e) = If (macterm c) (macterm t) (macterm e)
+
+macterm (AndX a b) = And (macterm a) (macterm b)
+macterm (OrX a b) = Or (macterm a) (macterm b)
+
+macterm (LeqX a b) = Leq (macterm a) (macterm b)
+macterm (IsZeroX e) = IsZero (macterm e)
+
+macterm (LambdaX x ty b) = Lambda x ty (macterm b)
+macterm (AppX f a) = App (macterm f) (macterm a)
+
+macterm (BindX x ty e1 e2) =
+  App (Lambda x ty (macterm e2)) (macterm e1)
+
+macterm (FixX e) = Fix (macterm e)
