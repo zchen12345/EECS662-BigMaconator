@@ -7,6 +7,8 @@ import Control.Monad
 data BigMacLang where
     Bnum :: BigMacLang
     Bbool :: BigMacLang
+    --adding required types for a vector
+    Bvec :: BigMacLang
     (:->:) :: BigMacLang -> BigMacLang -> BigMacLang
     deriving (Show, Eq)
 
@@ -28,6 +30,12 @@ data BigMacExpr where
     If :: BigMacExpr -> BigMacExpr -> BigMacExpr -> BigMacExpr
     Fix :: BigMacExpr -> BigMacExpr
     Between :: BigMacExpr -> BigMacExpr -> BigMacExpr -> BigMacExpr
+    --Adding required operations for a vector
+    EmptyVec :: BigMacExpr
+    VecCons :: BigMacExpr -> BigMacExpr -> BigMacExpr
+    VecHead :: BigMacExpr -> BigMacExpr
+    VecTail :: BigMacExpr -> BigMacExpr
+    VecDot :: BigMacExpr -> BigMacExpr -> BigMacExpr
     deriving (Show, Eq)
 
 data BigMacExtend where
@@ -49,12 +57,19 @@ data BigMacExtend where
   FixX :: BigMacExtend -> BigMacExtend
   BindX :: String -> BigMacLang -> BigMacExtend -> BigMacExtend -> BigMacExtend
   BetweenX :: BigMacExtend -> BigMacExtend -> BigMacExtend -> BigMacExtend
+  --Adding required extended operations for a vector
+  VecConsX :: BigMacExtend -> BigMacExtend -> BigMacExtend
+  VecHeadX :: BigMacExtend -> BigMacExtend
+  VecTailX :: BigMacExtend -> BigMacExtend
+  VecDotX :: BigMacExtend -> BigMacExtend -> BigMacExtend
   deriving (Show, Eq)
 
 data BigMacVal where
     NumMac :: Int -> BigMacVal
     BoolMac :: Bool -> BigMacVal
     ClosureMac :: String -> BigMacExpr -> McdonaldEnv -> BigMacVal
+    --Adding required values for a vector
+    VecMac :: [BigMacVal] -> BigMacVal
     deriving (Show, Eq)
 
 type McdonaldEnv = [(String, BigMacVal)]
@@ -157,7 +172,26 @@ typeof (Fix f) = do
   case tf of
     (t1 :->: t2) -> if t1 == t2 then return t1 else fail "Fix type error"
     _ -> fail "Fix expects function"
-  
+
+--type checking for vector operations, should be Bvec for both operands and return Bnum for dot product
+typeof (VecDot a b) = do
+  ta <- typeof a
+  tb <- typeof b
+  case (ta, tb) of
+    (Bvec, Bvec) -> return Bnum
+    _-> fail "Type error in VecDot: expected two Vec"
+
+typeof (EmptyVec) = return Bvec
+typeof (VecCons a b) = do
+  ta <- typeof a
+  tb <- typeof b
+  if tb == Bvec then return Bvec else fail "Type error in VecCons: expected Vec"
+typeof (VecHead v) = do
+  tv <- typeof v
+  if tv == Bvec then return Bnum else fail "Type error in VecHead: expected Vec"
+typeof (VecTail v) = do
+  tv <- typeof v
+  if tv == Bvec then return Bvec else fail "Type error in VecTail: expected Vec"
 
 numOp :: BigMacExpr -> BigMacExpr -> Reader McdonaldCont BigMacLang
 numOp e1 e2 = do
@@ -171,6 +205,32 @@ boolOp e1 e2 = do
   t2 <- typeof e2
   if t1 == Bbool && t2 == Bbool then return Bbool else fail "Boolean error"
 
+eval :: BigMacExpr -> Reader McdonaldEnv BigMacVal
+eval (Num n) = return (NumMac n)
+
+--implemetation for dot product using fixpoint to recursively compute the sum of products of corresponding elements
+eval (VecDot a b) = do
+  va <- eval a
+  vb <- eval b
+  case (va, vb) of
+    (VecMac xs, VecMac ys) ->
+      if length xs == length ys
+        then do
+          let dotHelper = Fix (Lambda "self" (Bvec :->: (Bvec :->: Bnum))
+                            (Lambda "v1" Bvec
+                              (Lambda "v2" Bvec
+                                (If (IsZero (VecHead (Id "v1")))
+                                  (Num 0)
+                                  (Plus
+                                    (Mult (VecHead (Id "v1")) (VecHead (Id "v2")))
+                                    (App (App (Id "self") (VecTail (Id "v1"))) (VecTail (Id "v2")))
+                                  )
+                                )
+                              )
+                            ))
+          eval (App (App dotHelper a) b)
+        else fail "VecDot: vectors must be same length"
+    _ -> fail "VecDot: expected two vectors"
 
 --Elaboration
 macterm :: BigMacExtend -> BigMacExpr
@@ -178,27 +238,24 @@ macterm :: BigMacExtend -> BigMacExpr
 macterm (NumX n) = Num n
 macterm (BoolX b) = Bool b
 macterm (IdX x) = Id x
-
 macterm (PlusX a b) = Plus (macterm a) (macterm b)
 macterm (MinusX a b) = Minus (macterm a) (macterm b)
 macterm (MultX a b) = Mult (macterm a) (macterm b)
 macterm (DivX a b) = Div (macterm a) (macterm b)
 macterm (ExpX a b) = Exp (macterm a) (macterm b)
-
 macterm (BetweenX a b c) = Between (macterm a) (macterm b) (macterm c)
-
 macterm (IfX c t e) = If (macterm c) (macterm t) (macterm e)
-
 macterm (AndX a b) = And (macterm a) (macterm b)
 macterm (OrX a b) = Or (macterm a) (macterm b)
-
 macterm (LeqX a b) = Leq (macterm a) (macterm b)
 macterm (IsZeroX e) = IsZero (macterm e)
-
 macterm (LambdaX x ty b) = Lambda x ty (macterm b)
 macterm (AppX f a) = App (macterm f) (macterm a)
-
 macterm (BindX x ty e1 e2) =
   App (Lambda x ty (macterm e2)) (macterm e1)
-
 macterm (FixX e) = Fix (macterm e)
+--Elaboration for vector operations
+macterm (VecDotX a b) = VecDot (macterm a) (macterm b)
+macterm (VecConsX a b) = VecCons (macterm a) (macterm b)
+macterm (VecHeadX v) = VecHead (macterm v)
+macterm (VecTailX v) = VecTail (macterm v)
