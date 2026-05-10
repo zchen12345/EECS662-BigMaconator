@@ -36,6 +36,7 @@ data BigMacExpr where
     VecHead :: BigMacExpr -> BigMacExpr
     VecTail :: BigMacExpr -> BigMacExpr
     VecDot :: BigMacExpr -> BigMacExpr -> BigMacExpr
+    IsEmpty :: BigMacExpr -> BigMacExpr
     deriving (Show, Eq)
 
 data BigMacExtend where
@@ -62,6 +63,7 @@ data BigMacExtend where
   VecHeadX :: BigMacExtend -> BigMacExtend
   VecTailX :: BigMacExtend -> BigMacExtend
   VecDotX :: BigMacExtend -> BigMacExtend -> BigMacExtend
+  IsEmptyX :: BigMacExtend -> BigMacExtend
   deriving (Show, Eq)
 
 data BigMacVal where
@@ -182,6 +184,7 @@ typeof (VecDot a b) = do
     _-> fail "Type error in VecDot: expected two Vec"
 
 typeof (EmptyVec) = return Bvec
+
 typeof (VecCons a b) = do
   ta <- typeof a
   tb <- typeof b
@@ -192,6 +195,11 @@ typeof (VecHead v) = do
 typeof (VecTail v) = do
   tv <- typeof v
   if tv == Bvec then return Bvec else fail "Type error in VecTail: expected Vec"
+typeof (IsEmpty e) = do
+  t <- typeof e
+  case t of
+    Bvec -> return Bbool
+    _    -> fail "Type error in IsEmpty: expected Vec"
 
 numOp :: BigMacExpr -> BigMacExpr -> Reader McdonaldCont BigMacLang
 numOp e1 e2 = do
@@ -208,6 +216,38 @@ boolOp e1 e2 = do
 eval :: BigMacExpr -> Reader McdonaldEnv BigMacVal
 eval (Num n) = return (NumMac n)
 
+
+--Evaluation for vector operations
+eval EmptyVec = return (VecMac [])
+
+eval (VecCons x xs) = do
+  v  <- eval x
+  vs <- eval xs
+  case vs of
+    VecMac rest -> return (VecMac (v : rest))
+    _           -> fail "VecCons: tail must be a vector"
+
+eval (VecHead e) = do
+  v <- eval e
+  case v of
+    VecMac (x:_) -> return x
+    VecMac []    -> fail "VecHead: empty vector"
+    _            -> fail "VecHead: not a vector"
+
+eval (VecTail e) = do
+  v <- eval e
+  case v of
+    VecMac (_:xs) -> return (VecMac xs)
+    VecMac []     -> fail "VecTail: empty vector"
+    _             -> fail "VecTail: not a vector"
+
+eval (IsEmpty e) = do
+  v <- eval e
+  case v of
+    VecMac [] -> return (BoolMac True)
+    VecMac _  -> return (BoolMac False)
+    _         -> fail "IsEmpty: not a vector"
+
 --implemetation for dot product using fixpoint to recursively compute the sum of products of corresponding elements
 eval (VecDot a b) = do
   va <- eval a
@@ -219,7 +259,7 @@ eval (VecDot a b) = do
           let dotHelper = Fix (Lambda "self" (Bvec :->: (Bvec :->: Bnum))
                             (Lambda "v1" Bvec
                               (Lambda "v2" Bvec
-                                (If (IsZero (VecHead (Id "v1")))
+                                (If (IsEmpty (Id "v1"))
                                   (Num 0)
                                   (Plus
                                     (Mult (VecHead (Id "v1")) (VecHead (Id "v2")))
@@ -259,3 +299,74 @@ macterm (VecDotX a b) = VecDot (macterm a) (macterm b)
 macterm (VecConsX a b) = VecCons (macterm a) (macterm b)
 macterm (VecHeadX v) = VecHead (macterm v)
 macterm (VecTailX v) = VecTail (macterm v)
+macterm (IsEmptyX e) = IsEmpty (macterm e)
+
+--Test cases for vector operations
+
+-- Vector [1,2,3]
+vec123 :: BigMacExpr
+vec123 =
+  VecCons (Num 1)
+    (VecCons (Num 2)
+      (VecCons (Num 3)
+        EmptyVec))
+
+-- Vector [4,5,6]
+vec456 :: BigMacExpr
+vec456 =
+  VecCons (Num 4)
+    (VecCons (Num 5)
+      (VecCons (Num 6)
+        EmptyVec))
+
+-- Vector [10,20]
+vec1020 :: BigMacExpr
+vec1020 =
+  VecCons (Num 10)
+    (VecCons (Num 20)
+      EmptyVec)
+
+-- Vector [7,8]
+vec78 :: BigMacExpr
+vec78 =
+  VecCons (Num 7)
+    (VecCons (Num 8)
+      EmptyVec)
+
+-- Empty vector
+vecEmpty :: BigMacExpr
+vecEmpty = EmptyVec
+
+
+-- Test 1: [1,2,3] · [4,5,6]
+-- 1*4 + 2*5 + 3*6 = 32
+-- Expected: Just (NumMac 32)
+testDot1 =
+  runR (eval (VecDot vec123 vec456)) []
+
+-- Test 2: [10,20] · [7,8]
+-- 10*7 + 20*8 = 230
+-- Expected: Just (NumMac 230)
+testDot2 =
+  runR (eval (VecDot vec1020 vec78)) []
+
+-- Test 3: [] · []
+-- Expected: Just (NumMac 0)
+testDot3 =
+  runR (eval (VecDot vecEmpty vecEmpty)) []
+
+-- Test 4: Length mismatch
+-- [1,2,3] · [7,8]
+-- Expected: Nothing
+testDot4 =
+  runR (eval (VecDot vec123 vec78)) []
+
+-- Test 5: Type checking
+-- Expected: Just Bnum
+testDotType =
+  runR (typeof (VecDot vec123 vec456)) []
+
+-- Test 6: Type error (second argument is not a vector)
+-- Expected: Nothing
+testDotTypeError =
+  runR (typeof (VecDot vec123 (Num 5))) []
