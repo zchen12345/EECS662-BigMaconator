@@ -301,6 +301,13 @@ macterm (VecHeadX v) = VecHead (macterm v)
 macterm (VecTailX v) = VecTail (macterm v)
 macterm (IsEmptyX e) = IsEmpty (macterm e)
 
+interpret :: BigMacExtend -> Maybe BigMacVal
+interpret t =
+  let core = macterm t
+  in case runR (typeof core) [] of
+       Nothing -> Nothing
+       Just _  -> runR (eval core) []
+
 --Test cases for vector operations
 
 -- Vector [1,2,3]
