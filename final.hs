@@ -215,6 +215,60 @@ boolOp e1 e2 = do
 
 eval :: BigMacExpr -> Reader McdonaldEnv BigMacVal
 eval (Num n) = return (NumMac n)
+eval (Boolean b) = return (BooleanV b)
+eval (Plus l r) = do {(NumV l') <- eval l;
+                            (NumV r') <- eval r;
+                            return (NumV (l'+r'))}
+eval (Minus l r) = do {(NumV l') <- eval l;
+                             (NumV r') <- eval r;
+                             return (NumV (l'-r'))}
+eval (Mult l r) = do {(NumV l') <- eval l;
+                            (NumV r') <- eval r;
+                            return (NumV (l'*r'))}
+eval (Div l r) = do {(NumV l') <- eval l;
+                           (NumV r') <- eval r;
+                           if r'==0 then fail "negative number" else return (NumV (l'`div`r'))}
+eval (Exp l r) = do {(NumV l') <- eval l;
+                            (NumV r') <- eval r;
+                            return (NumV (l'^r'))}
+eval (If c t e) = do {(BooleanV c') <- eval c;
+                       if c' then eval t else eval e }
+eval (And l r) = do {(BooleanV l') <- eval l;
+                     (BooleanV r') <- eval r;
+                     return (BooleanV (l' && r'))}
+eval (Or l r) = do {(BooleanV l') <- eval l;
+                    (BooleanV r') <- eval r;
+                    return (BooleanV (l' || r'))}
+eval (Leq l r) = do {(NumV l') <- eval l;
+                     (NumV r') <- eval r;
+                     return (BooleanV (l'<=r'))}
+eval (IsZero n) = do {(NumV n') <- eval n;
+                      return (BooleanV (n'==0))}
+eval (Between c t e) = do {(NumV c') <- eval c;
+                           (NumV t') <- eval t;
+                           (NumV e') <- eval e;
+                           return (BooleanV (c' < t' && t' < e'))}
+eval (Id i) = do {env <- ask;
+                        case (lookup i env) of
+                           Just x -> return x
+                           Nothing -> fail "unbound variable"}
+eval (Lambda i _ b) = do {env <- ask;
+                        return (ClosureV i b env)}
+eval (App f a) = do {(ClosureV i b e) <- eval f;
+                           v <- eval a;
+                           local (useClosure i v e) (eval b)}
+eval (Fix f) = do
+  fv <- eval f
+  env <- ask
+  let uName = "_u"
+      xName = "_x"
+      yName = "_y"
+      fName = "_f"
+      uBody = Lambda yName TNum
+                (App (App (Id fName) (App (Id xName) (Id xName))) (Id yName))
+      u = ClosureV xName uBody ((fName, fv) : env)
+      evalEnv = (uName, u) : env
+  local (const evalEnv) (eval (App (Id uName) (Id uName)))
 
 
 --Evaluation for vector operations
