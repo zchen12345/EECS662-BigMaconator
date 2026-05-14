@@ -9,6 +9,8 @@ data BigMacLang where
     Bbool :: BigMacLang
     --adding required types for a vector
     Bvec :: BigMacLang
+    -- required types for a set
+    Bset :: BigMacLang
     (:->:) :: BigMacLang -> BigMacLang -> BigMacLang
     deriving (Show, Eq)
 
@@ -36,6 +38,14 @@ data BigMacExpr where
     VecHead :: BigMacExpr -> BigMacExpr
     VecTail :: BigMacExpr -> BigMacExpr
     VecDot :: BigMacExpr -> BigMacExpr -> BigMacExpr
+    -- Set operations
+    EmptySet :: BigMacExpr
+    SetInsert :: BigMacExpr -> BigMacExpr -> BigMacExpr
+    SetMember :: BigMacExpr -> BigMacExpr -> BigMacExpr
+    SetUnion :: BigMacExpr -> BigMacExpr -> BigMacExpr
+    SetIntersect :: BigMacExpr -> BigMacExpr -> BigMacExpr
+    SetDiff :: BigMacExpr -> BigMacExpr -> BigMacExpr
+    SetSize :: BigMacExpr -> BigMacExpr
     IsEmpty :: BigMacExpr -> BigMacExpr
     deriving (Show, Eq)
 
@@ -63,6 +73,13 @@ data BigMacExtend where
   VecHeadX :: BigMacExtend -> BigMacExtend
   VecTailX :: BigMacExtend -> BigMacExtend
   VecDotX :: BigMacExtend -> BigMacExtend -> BigMacExtend
+  EmptySetX :: BigMacExtend
+  SetInsertX :: BigMacExtend -> BigMacExtend -> BigMacExtend
+  SetMemberX :: BigMacExtend -> BigMacExtend -> BigMacExtend
+  SetUnionX :: BigMacExtend -> BigMacExtend -> BigMacExtend
+  SetIntersectX :: BigMacExtend -> BigMacExtend -> BigMacExtend
+  SetDiffX :: BigMacExtend -> BigMacExtend -> BigMacExtend
+  SetSizeX :: BigMacExtend -> BigMacExtend
   IsEmptyX :: BigMacExtend -> BigMacExtend
   deriving (Show, Eq)
 
@@ -72,6 +89,8 @@ data BigMacVal where
     ClosureMac :: String -> BigMacExpr -> McdonaldEnv -> BigMacVal
     --Adding required values for a vector
     VecMac :: [BigMacVal] -> BigMacVal
+    --Required values for a set
+    SetMac :: [BigMacVal] -> BigMacVal
     deriving (Show, Eq)
 
 type McdonaldEnv = [(String, BigMacVal)]
@@ -201,6 +220,41 @@ typeof (IsEmpty e) = do
     Bvec -> return Bbool
     _    -> fail "Type error in IsEmpty: expected Vec"
 
+typeof EmptySet = return Bset
+
+typeof (SetInsert e s) = do
+    te <- typeof e
+    ts <- typeof s
+    if te == Bnum && ts == Bset
+        then return Bset
+        else fail "Type error in SetInsert: expected Num and Set"
+
+typeof (SetMember e s) = do
+    te <- typeof e
+    ts <- typeof s
+    if te == Bnum && ts == Bset
+        then return Bbool
+        else fail "Type error in SetMember: expected Num and Set"
+
+typeof (SetUnion a b) = setOp a b
+typeof (SetIntersect a b) = setOp a b
+typeof (SetDiff a b) = setOp a b
+
+typeof (SetSize s) = do
+    ts <- typeof s
+    if ts == Bset
+        then return Bnum
+        else fail "Type error in SetSize: expected Set"
+
+-- helper (add alongside numOp/boolOp)
+setOp :: BigMacExpr -> BigMacExpr -> Reader McdonaldCont BigMacLang
+setOp a b = do
+    ta <- typeof a
+    tb <- typeof b
+    if ta == Bset && tb == Bset
+        then return Bset
+        else fail "Set operation type error: expected two Sets"
+
 numOp :: BigMacExpr -> BigMacExpr -> Reader McdonaldCont BigMacLang
 numOp e1 e2 = do
   t1 <- typeof e1
@@ -326,6 +380,52 @@ eval (VecDot a b) = do
         else fail "VecDot: vectors must be same length"
     _ -> fail "VecDot: expected two vectors"
 
+eval EmptySet = return (SetMac [])
+
+eval (SetInsert e s) = do
+    v  <- eval e
+    sv <- eval s
+    case sv of
+        SetMac xs -> return (SetMac (if v `elem` xs then xs else v : xs))
+        _         -> fail "SetInsert: second argument must be a set"
+
+eval (SetMember e s) = do
+    v  <- eval e
+    sv <- eval s
+    case sv of
+        SetMac xs -> return (BoolMac (v `elem` xs))
+        _         -> fail "SetMember: second argument must be a set"
+
+eval (SetUnion a b) = do
+    va <- eval a
+    vb <- eval b
+    case (va, vb) of
+        (SetMac xs, SetMac ys) ->
+            return (SetMac (xs ++ filter (`notElem` xs) ys))
+        _ -> fail "SetUnion: expected two sets"
+
+eval (SetIntersect a b) = do
+    va <- eval a
+    vb <- eval b
+    case (va, vb) of
+        (SetMac xs, SetMac ys) ->
+            return (SetMac (filter (`elem` ys) xs))
+        _ -> fail "SetIntersect: expected two sets"
+
+eval (SetDiff a b) = do
+    va <- eval a
+    vb <- eval b
+    case (va, vb) of
+        (SetMac xs, SetMac ys) ->
+            return (SetMac (filter (`notElem` ys) xs))
+        _ -> fail "SetDiff: expected two sets"
+
+eval (SetSize s) = do
+    sv <- eval s
+    case sv of
+        SetMac xs -> return (NumMac (length xs))
+        _         -> fail "SetSize: expected a set"
+
 --Elaboration
 macterm :: BigMacExtend -> BigMacExpr
 
@@ -354,6 +454,13 @@ macterm (VecConsX a b) = VecCons (macterm a) (macterm b)
 macterm (VecHeadX v) = VecHead (macterm v)
 macterm (VecTailX v) = VecTail (macterm v)
 macterm (IsEmptyX e) = IsEmpty (macterm e)
+macterm EmptySetX = EmptySet
+macterm (SetInsertX e s) = SetInsert (macterm e) (macterm s)
+macterm (SetMemberX e s) = SetMember (macterm e) (macterm s)
+macterm (SetUnionX a b) = SetUnion (macterm a) (macterm b)
+macterm (SetIntersectX a b) = SetIntersect (macterm a) (macterm b)
+macterm (SetDiffX a b) = SetDiff (macterm a) (macterm b)
+macterm (SetSizeX s) = SetSize (macterm s)
 
 interpret :: BigMacExtend -> Maybe BigMacVal
 interpret t =
@@ -431,3 +538,32 @@ testDotType =
 -- Expected: Nothing
 testDotTypeError =
   runR (typeof (VecDot vec123 (Num 5))) []
+
+-- {1, 2, 3}
+setA :: BigMacExpr
+setA = SetInsert (Num 1) (SetInsert (Num 2) (SetInsert (Num 3) EmptySet))
+
+-- {2, 3, 4}
+setB :: BigMacExpr
+setB = SetInsert (Num 2) (SetInsert (Num 3) (SetInsert (Num 4) EmptySet))
+
+-- Test: union {1,2,3} ∪ {2,3,4} → {1,2,3,4}
+testUnion = runR (eval (SetUnion setA setB)) []
+
+-- Test: intersect {1,2,3} ∩ {2,3,4} → {2,3}
+testIntersect = runR (eval (SetIntersect setA setB)) []
+
+-- Test: diff {1,2,3} \ {2,3,4} → {1}
+testDiff = runR (eval (SetDiff setA setB)) []
+
+-- Test: member 2 ∈ {1,2,3} → True
+testMember = runR (eval (SetMember (Num 2) setA)) []
+
+-- Test: size of {1,2,3} → 3
+testSize = runR (eval (SetSize setA)) []
+
+-- Test: duplicate insert — {1,1,2} should still be size 2
+testDup = runR (eval (SetSize (SetInsert (Num 1) (SetInsert (Num 1) (SetInsert (Num 2) EmptySet))))) []
+
+-- Test: type check
+testSetType = runR (typeof (SetUnion setA setB)) []
